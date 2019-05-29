@@ -29,6 +29,9 @@ class Client():
         data = self.sock.recv(4096).decode("utf8")
         output = dict()
 
+        if data == 'error\nwrong command\n\n':
+            raise ClientError
+
         if len(data) > 4:
             temp = data.split()
             sorted_by_date_data = collections.OrderedDict()
