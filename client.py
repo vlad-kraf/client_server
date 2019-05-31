@@ -17,56 +17,67 @@ class Client():
 
     def put(self, key, value, timestamp=None):
         if timestamp is None:
-            timestamp = int(time.time())
+            timestamp = str(int(time.time()))
 
         self.sock.send(f"put {key} {value} {timestamp}\n".encode("utf8"))
 
-        while True:
-            data = self.sock.recv(1024)
-            if not data:
-                break
+        data = b""
+        while not data:
+            data += self.sock.recv(1024)
 
-            data = data.decode("utf8")
+        data = data.decode("utf8")
 
-            print(f"получен ответ сервера: {data}" )
-            if data != 'ok\n\n':
-                raise ClientError
+        if data == 'error\nwrong command\n\n':
+            raise ClientError
 
 
     def get(self, key):
 
         self.sock.send(f"get {key}\n".encode("utf8"))
 
-        while True:
-            data = self.sock.recv(1024)
-            if not data:
-                break
+        data = b""
+        while not data:
+            data += self.sock.recv(1024)
 
-            data = data.decode("utf8")
+        data = data.decode("utf8")
 
-            output = dict()
-            temp = data.strip().split()
-            sorted_by_date_data = collections.OrderedDict()
+        # Обработка и вывод ответа сервера:
+        # создаем пустой словарь для вывода данных.
+        output = {}
 
+        # если сервер не нашел метрик, то возвращаем пустой словарь в ответе.
+        if data == 'ok\n\n':
+            return output
+
+        # если сервер вернул ошибку, то райзим ClientError.
+        elif data == 'error\nwrong command\n\n':
+            raise ClientError
+
+        else:
+            # разделяем строку на подстроки и кладем их в темповый список.
+            temp = data.split()
+            # удаляем из темпового массива маркер ответа сервера, оставляем только логи.
             if temp[0] == 'ok':
                 temp.remove('ok')
 
+            # cоздаём ordered dict который будет использован для сортировки логов по дате.
+            sorted_by_date_data = collections.OrderedDict()
+            # переносим данные из темпового списка в OrderedDict с ключем равным дате.
             i = 0
             for _ in range(int(len(temp) / 3)):
-                sorted_by_date_data[int(temp[i + 2])] = (temp[i], temp[i + 1])
+                sorted_by_date_data[temp[i + 2]] = (temp[i], temp[i + 1])
                 i += 3
-
+            # сортируем логи по дате в OrderedDict.
             sorted_by_date_data = sorted(sorted_by_date_data.items())
 
+            # кновертируем логи отсортированные по дате в формат нужный для вывода.
             i = 0
             for k, v in sorted_by_date_data:
                 if v[0] in output:
-                    output[v[0]].append(( k, float(v[1]) ))
+                    output[v[0]].append((int(k), float(v[1])))
                 else:
                     output[v[0]] = []
-                    output[v[0]].append(( k, float(v[1]) ))
+                    output[v[0]].append((int(k), float(v[1])))
                 i += 3
 
             return output
-
-
