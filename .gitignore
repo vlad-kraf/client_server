@@ -1,3 +1,5 @@
+.idea/
 venv/
 server.py
 test_week5.py
+.gitignore
