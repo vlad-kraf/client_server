@@ -1,83 +1,113 @@
 import socket
 import time
-import collections
 
 
 class ClientError(Exception):
+    """Общий класс исключений клиента"""
     pass
 
 
-class Client():
+class ClientSocketError(ClientError):
+    """Исключение, выбрасываемое клиентом при сетевой ошибке"""
+    pass
 
+
+class ClientProtocolError(ClientError):
+    """Исключение, выбрасываемое клиентом при ошибке протокола"""
+    pass
+
+
+class Client:
     def __init__(self, host, port, timeout=None):
+        # класс инкапсулирует создание сокета
+        # создаем клиентский сокет, запоминаем объект socke.socket в self
         self.host = host
         self.port = port
-        self.timeout = timeout
-        self.sock = socket.create_connection((self.host, self.port), self.timeout)
+        try:
+            self.connection = socket.create_connection((host, port), timeout)
+        except socket.error as err:
+            raise ClientSocketError("error create connection", err)
+
+    def _read(self):
+        """Метод для чтения ответа сервера"""
+        data = b""
+        # накапливаем буфер, пока не встретим "\n\n" в конце команды
+        while not data.endswith(b"\n\n"):
+            try:
+                data += self.connection.recv(1024)
+            except socket.error as err:
+                raise ClientSocketError("error recv data", err)
+
+        # не забываем преобразовывать байты в объекты str для дальнейшей работы
+        decoded_data = data.decode()
+
+        status, payload = decoded_data.split("\n", 1)
+        payload = payload.strip()
+
+        # если получили ошибку - бросаем исключение ClientError
+        if status == "error":
+            raise ClientProtocolError(payload)
+
+        return payload
 
     def put(self, key, value, timestamp=None):
-        if timestamp is None:
-            timestamp = str(int(time.time()))
+        timestamp = timestamp or int(time.time())
 
-        self.sock.send(f"put {key} {value} {timestamp}\n".encode("utf8"))
+        # отправляем запрос команды put
+        try:
+            self.connection.sendall(
+                f"put {key} {value} {timestamp}\n".encode()
+            )
+        except socket.error as err:
+            raise ClientSocketError("error send data", err)
 
-        data = b""
-        while not data:
-            data += self.sock.recv(1024)
-
-        data = data.decode("utf8")
-
-        if data == 'error\nwrong command\n\n':
-            raise ClientError
-
+        # разбираем ответ
+        self._read()
 
     def get(self, key):
+        # формируем и отправляем запрос команды get
+        try:
+            self.connection.sendall(
+                f"get {key}\n".encode()
+            )
+        except socket.error as err:
+            raise ClientSocketError("error send data", err)
 
-        self.sock.send(f"get {key}\n".encode("utf8"))
+        # читаем ответ
+        payload = self._read()
 
-        data = b""
-        while not data:
-            data += self.sock.recv(1024)
+        data = {}
+        if payload == "":
+            return data
 
-        data = data.decode("utf8")
+        # разбираем ответ для команды get
+        for row in payload.split("\n"):
+            key, value, timestamp = row.split()
+            if key not in data:
+                data[key] = []
+            data[key].append((int(timestamp), float(value)))
 
-        # Обработка и вывод ответа сервера:
-        # создаем пустой словарь для вывода данных.
-        output = {}
+        return data
 
-        # если сервер не нашел метрик, то возвращаем пустой словарь в ответе.
-        if data == 'ok\n\n':
-            return output
+    def close(self):
+        try:
+            self.connection.close()
+        except socket.error as err:
+            raise ClientSocketError("error close connection", err)
 
-        # если сервер вернул ошибку, то райзим ClientError.
-        elif data == 'error\nwrong command\n\n':
-            raise ClientError
 
-        else:
-            # разделяем строку на подстроки и кладем их в темповый список.
-            temp = data.split()
-            # удаляем из темпового массива маркер ответа сервера, оставляем только логи.
-            if temp[0] == 'ok':
-                temp.remove('ok')
+def _main():
+    # проверка работы клиента
+    client = Client("127.0.0.1", 8888, timeout=5)
+    client.put("test", 0.5, timestamp=1)
+    client.put("test", 2.0, timestamp=2)
+    client.put("test", 0.5, timestamp=3)
+    client.put("load", 3, timestamp=4)
+    client.put("load", 4, timestamp=5)
+    print(client.get("*"))
 
-            # cоздаём ordered dict который будет использован для сортировки логов по дате.
-            sorted_by_date_data = collections.OrderedDict()
-            # переносим данные из темпового списка в OrderedDict с ключем равным дате.
-            i = 0
-            for _ in range(int(len(temp) / 3)):
-                sorted_by_date_data[temp[i + 2]] = (temp[i], temp[i + 1])
-                i += 3
-            # сортируем логи по дате в OrderedDict.
-            sorted_by_date_data = sorted(sorted_by_date_data.items())
+    client.close()
 
-            # кновертируем логи отсортированные по дате в формат нужный для вывода.
-            i = 0
-            for k, v in sorted_by_date_data:
-                if v[0] in output:
-                    output[v[0]].append((int(k), float(v[1])))
-                else:
-                    output[v[0]] = []
-                    output[v[0]].append((int(k), float(v[1])))
-                i += 3
 
-            return output
+if __name__ == "__main__":
+    _main()
